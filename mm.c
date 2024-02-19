@@ -1,32 +1,3 @@
-/*
- * mm.c
- * 
- * Block Format: Minimum size is 16 bytes.
- *  - Free-Block Format: [Header - Pred - Succ - (Empty) - Footer]
- *  - Allocated-Block Format: [Header - Payload - Footer]
- *  - Header/Footer: 1-word holds size of the block and allocation-bit at LSB(Least Significant Bit)
- *  - Pred: 1-word holds the address of the predecessor free-block.
- *  - Succ: 1-word holds the address of the successor free-block.
- * 
- * List Format: array of 8 explicit-free lists
- * Heap Format: [seglist-array[8] | Head-Block[1] | Regular-Blocks ...| Tail-Block[1]]
- *  - Head/Tail: 1-word allocated block of zero size.
- * 
- * Placement Policy: using best-fit algorithm.
- * Split Policy: split if remainder is greater than 16 bytes
- * Coalescing Policy: bi-direction coalescing for free-blocks and allocated-blocks
- * Heap Extension Policy: 
- *  - if the size is greater than CHUNK_SIZE: extend by one block of the given size
- *  - else: extend the heap by a few blocks each of the given size. 
- * 
- * realloc:
- *  - if new-size is greater than current-size: expand the block if it can be expanded,
- *    otherwise, reallocate the block (allocate - copy - free).
- *  - if the new-size is less than current size by 64 byte at least then split.
- * 
- * NOTE: Coalescing is not strict, there are some free blocks not coalesced just to keep
- *       a variety of sizes in the seglist.
- */
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -40,7 +11,7 @@
 
 team_t team = {
   /* Team name */
-  "team 2",
+  "tema 2",
   /* First member's full name */
   "Kyungwook Min",
   /* First member's email address */
@@ -88,7 +59,7 @@ inline static int seg_index(size_t);
 #define CHUNKSIZE (1<<8)                  /* Minimum heap allocation size */
 #define MIN_BLOCK_SIZE 16                 /* Minimum block size */
 #define ALIGNMENT 8                       /* Payload Alignment */
-#define SEGLIST_NUM 8                     /* The Number of lists in the seglist */
+#define DSIZE 8                     /* The Number of lists in the seglist */
 #define WTYPE u_int32_t                   /* Word type */
 #define BYTE char                         /* Byte type */
 
@@ -126,44 +97,44 @@ inline static int seg_index(size_t);
 
 /* ---------------------------- Payload Macros ------------------------------ */
 
-/* Get the header-word pointer from the payload pointer pp */
-#define HEADER(pp) (MOVE_WORD(pp, -1))
-/* Get the footer-word pointer from the payload pointer pp */
-#define FOOTER(pp) (MOVE_BYTE(pp, PAYLOAD_SIZE(pp)))
-/* Get next block payload pointer from pp (current payload pointer) */
-#define NEXT_BLOCK(pp) (MOVE_BYTE(pp, BLOCK_SIZE(pp)))
-/* Get previous block payload pointer from pp (current payload pointer) */
-#define PREV_BLOCK(pp) (MOVE_BYTE(pp, - READ_SIZE(MOVE_WORD(pp, -2))))
-/* Read the block size at the payload pp */
-#define BLOCK_SIZE(pp) (READ_SIZE(HEADER(pp)))
-/* Read the payload size at pp */
-#define PAYLOAD_SIZE(pp) (BLOCK_SIZE(pp) - DSIZE)
-/* Check if the block at the payload pp is free */
-#define IS_FREE(pp) (!(READ_ALLOC(HEADER(pp))))
+/* Get the header-word pointer from the payload pointer bp */
+#define HEADER(bp) (MOVE_WORD(bp, -1))
+/* Get the footer-word pointer from the payload pointer bp */
+#define FOOTER(bp) (MOVE_BYTE(bp, PAYLOAD_SIZE(bp)))
+/* Get next block payload pointer from bp (current payload pointer) */
+#define NEXT_BLOCK(bp) (MOVE_BYTE(bp, BLOCK_SIZE(bp)))
+/* Get previous block payload pointer from bp (current payload pointer) */
+#define PREV_BLOCK(bp) (MOVE_BYTE(bp, - READ_SIZE(MOVE_WORD(bp, -2))))
+/* Read the block size at the payload bp */
+#define BLOCK_SIZE(bp) (READ_SIZE(HEADER(bp)))
+/* Read the payload size at bp */
+#define PAYLOAD_SIZE(bp) (BLOCK_SIZE(bp) - DSIZE)
+/* Check if the block at the payload bp is free */
+#define IS_FREE(bp) (!(READ_ALLOC(HEADER(bp))))
 
-/* Sets the size and allocation-bit to header/footer of block at pp */
-#define SET_INFO(pp, size, alloc)\
-  ((WRITE(HEADER(pp),(size),(alloc))), \
-   (WRITE(FOOTER(pp),(size),(alloc))))
+/* Sets the size and allocation-bit to header/footer of block at bp */
+#define SET_INFO(bp, size, alloc)\
+  ((WRITE(HEADER(bp),(size),(alloc))), \
+   (WRITE(FOOTER(bp),(size),(alloc))))
 
-/* Sets the size to header/footer of block at pp */
-#define SET_SIZE(pp, size)\
-  ((WRITE_SIZE(HEADER(pp),(size))), \
-   (WRITE_SIZE(FOOTER(pp),(size))))
+/* Sets the size to header/footer of block at bp */
+#define SET_SIZE(bp, size)\
+  ((WRITE_SIZE(HEADER(bp),(size))), \
+   (WRITE_SIZE(FOOTER(bp),(size))))
 
-/* Sets the allocation-bit to header/footer of block at pp */
-#define SET_ALLOC(pp, alloc)\
-  ((WRITE_ALLOC(HEADER(pp),(alloc))), \
-   (WRITE_ALLOC(FOOTER(pp),(alloc))))
+/* Sets the allocation-bit to header/footer of block at bp */
+#define SET_ALLOC(bp, alloc)\
+  ((WRITE_ALLOC(HEADER(bp),(alloc))), \
+   (WRITE_ALLOC(FOOTER(bp),(alloc))))
 
 /* Get the predecessor payload address */
-#define GET_PRED(pp) ((WTYPE *)(READ_WORD(pp)))
+#define GET_PRED(bp) ((WTYPE *)(READ_WORD(bp)))
 /* Get the successor payload address */
-#define GET_SUCC(pp) ((WTYPE *)(READ_WORD(MOVE_WORD(pp, 1))))
-/* Set the predecessor payload address to pred_pp */
-#define SET_PRED(pp, pred_pp) (WRITE_WORD(pp, ((WTYPE) pred_pp)))
-/* Set the successor payload address to succ_pp */
-#define SET_SUCC(pp, succ_pp) (WRITE_WORD(MOVE_WORD(pp, 1), ((WTYPE) succ_pp)))
+#define GET_NEXT(bp) ((WTYPE *)(READ_WORD(MOVE_WORD(bp, 1))))
+/* Set the predecessor payload address to pred_bp */
+#define PREV_FBLK(bp, pred_bp) (WRITE_WORD(bp, ((WTYPE) pred_bp)))
+/* Set the successor payload address to succ_bp */
+#define NEXT_FBLK(bp, succ_bp) (WRITE_WORD(MOVE_WORD(bp, 1), ((WTYPE) succ_bp)))
 
 /* ======================= Private Global Variables ============================== */
 
@@ -178,13 +149,13 @@ static WTYPE** seglist;       /* array of free-list pointers */
  */
 int mm_init(void) {
   /* Create the initial empty heap */
-  void* heap = mem_sbrk((SEGLIST_NUM + 2) * WSIZE); /* seglist + head + tail */
+  void* heap = mem_sbrk((DSIZE + 2) * WSIZE); /* seglist + head + tail */
   if (heap == (void*)-1) return -1;
 
   seglist = heap;
-  heap = MOVE_WORD(heap, SEGLIST_NUM);
+  heap = MOVE_WORD(heap, DSIZE);
   // initialize the seglist
-  for(int i = 0; i < SEGLIST_NUM; ++i){
+  for(int i = 0; i < DSIZE; ++i){
     seglist[i] = NULL;
   }
 
@@ -203,25 +174,25 @@ int mm_init(void) {
  */
 void* mm_malloc(size_t size) {
   if (size == 0) return NULL;
-  void* pp;                             /* Payload Pointer */
+  void* bp;                             /* Payload Pointer */
   size = ALIGN(size + DSIZE);           /* Add header and footer words */
   size = MAX(size, MIN_BLOCK_SIZE);
 
   /* Search the free list for a fit */
-  if ((pp = find_fit(size)) == NULL) {
+  if ((bp = find_fit(size)) == NULL) {
     /* No fit found, request a block from the memory */
     if (size > CHUNKSIZE){
-      pp = extend_heap(size);
+      bp = extend_heap(size);
     }else{
-      pp = extend_heap(4 * CHUNKSIZE);
-      chop_block(pp, size);
+      bp = extend_heap(4 * CHUNKSIZE);
+      chop_block(bp, size);
     }
-    if (pp == NULL) return NULL;
+    if (bp == NULL) return NULL;
   }
 
-  pp = place(pp, size);
+  bp = place(bp, size);
   heap_check(__LINE__);
-  return pp;
+  return bp;
 }
 
 /*
@@ -229,7 +200,7 @@ void* mm_malloc(size_t size) {
  */
 void mm_free(void* ptr) {
   SET_ALLOC(ptr, 0);
-  link_block(ptr);
+  // link_block(ptr);
   coalesce(ptr);
   heap_check(__LINE__);
 }
@@ -242,9 +213,7 @@ void mm_free(void* ptr) {
  * Return address of the reallocated block, NULL on error.
  */
 void* mm_realloc(void* ptr, size_t size) {
-  if (ptr == NULL){
-    return mm_malloc(size);
-  }else if (size == 0){
+  if (size == 0 || ptr == NULL){
     mm_free(ptr);
     return NULL;
   }else{
@@ -257,28 +226,29 @@ void* mm_realloc(void* ptr, size_t size) {
 /* =========================== Private Functions ================================== */
 
 /*
- * Resize the allocated block at pp to have size bytes
+ * Resize the allocated block at bp to have size bytes
  * Return address of the resized block, NULL on error.
  */
-static void* resize_block(void* pp, size_t size) {
+static void* resize_block(void* bp, size_t size) {
   size_t asize = MAX(MIN_BLOCK_SIZE, ALIGN(size + DSIZE));
-  size_t bsize = BLOCK_SIZE(pp);
+  size_t bsize = BLOCK_SIZE(bp);
   size_t csize = bsize - asize;
 
   if (asize > bsize) {
-    if (can_expand(pp, asize)) return expand_block(pp, asize);
-    return reallocate_block(pp, size);
+    if (can_expand(bp, asize))
+      return expand_block(bp, asize);
+    return reallocate_block(bp, size);
   }
 
   // Split only if the fragment is large enough.
-  if (csize >= (4 * MIN_BLOCK_SIZE)){
-    SET_INFO(pp, asize, 1);
-    void* fp = NEXT_BLOCK(pp);
+  if (csize >= (MIN_BLOCK_SIZE)){
+    SET_INFO(bp, asize, 1);
+    void* fp = NEXT_BLOCK(bp);
     SET_INFO(fp, csize, 0);
     link_block(fp);
   }
 
-  return pp;
+  return bp;
 }
 
 /*
@@ -288,24 +258,24 @@ static void* resize_block(void* pp, size_t size) {
 static void* reallocate_block(void* ptr, size_t size) {
   void *newptr = mm_malloc(size);
   if (newptr == NULL) return NULL;
-  size_t copy_size = MIN(PAYLOAD_SIZE(ptr), size);
-  memcpy(newptr, ptr, copy_size);
+  // size_t copy_size = MIN(PAYLOAD_SIZE(ptr), size);
+  memcpy(newptr, ptr, PAYLOAD_SIZE(ptr));
   mm_free(ptr);
   return newptr;
 }
 
 /**
- * checks if the allocated-block at pp can expand to have the given size
+ * checks if the allocated-block at bp can expand to have the given size
  */
-static int can_expand(void* pp, size_t size){
-  size_t bsize = BLOCK_SIZE(pp);
+static int can_expand(void* bp, size_t size){
+  size_t bsize = BLOCK_SIZE(bp);
 
-  for(void* ptr = NEXT_BLOCK(pp); IS_FREE(ptr) ; ptr = NEXT_BLOCK(ptr)){
+  for(void* ptr = NEXT_BLOCK(bp); IS_FREE(ptr) ; ptr = NEXT_BLOCK(ptr)){
     bsize += BLOCK_SIZE(ptr);
     if (bsize >= size) return 1;
   }
 
-  for(void* ptr = pp; !READ_ALLOC(MOVE_WORD(ptr, -2)) ; ){
+  for(void* ptr = bp; !READ_ALLOC(MOVE_WORD(ptr, -2)) ; ){
     ptr = PREV_BLOCK(ptr);
     bsize += BLOCK_SIZE(ptr);
     if (bsize >= size) return 1;
@@ -315,54 +285,53 @@ static int can_expand(void* pp, size_t size){
 }
 
 /**
- * expands the allocated-block at pp until it has the given size
+ * expands the allocated-block at bp until it has the given size
  * return address to the new expanded block
 */
-static void* expand_block(void *pp, size_t size) {
-  void* cpp = pp;
-  size_t bsize = BLOCK_SIZE(pp);
+static void* expand_block(void *bp, size_t size) {
+  void* cbp = bp;
+  size_t bsize = BLOCK_SIZE(bp);
 
-  for(void* ptr = NEXT_BLOCK(pp); IS_FREE(ptr) ; ptr = NEXT_BLOCK(ptr)){
+  for(void* ptr = NEXT_BLOCK(bp); IS_FREE(ptr) ; ptr = NEXT_BLOCK(ptr)){
     bsize += BLOCK_SIZE(ptr);
     unlink_block(ptr);
-    if (bsize >= size) break;
+    if (bsize >= size) {
+      SET_INFO(cbp, bsize, 1);
+      return cbp;
+    }
   }
 
-  if (bsize >= size) {
-    SET_INFO(cpp, bsize, 1);
-    return cpp;
-  }
-
-  for(void* ptr = pp; !READ_ALLOC(MOVE_WORD(ptr, -2)) ; ){
-    cpp = ptr = PREV_BLOCK(ptr);
+  for(void* ptr = bp; !READ_ALLOC(MOVE_WORD(ptr, -2)) ; ){
+    cbp = ptr = PREV_BLOCK(ptr);
     bsize += BLOCK_SIZE(ptr);
     unlink_block(ptr);
-    if (bsize >= size) break;
+    if (bsize >= size) {
+      memmove(cbp, bp, PAYLOAD_SIZE(bp));
+      SET_INFO(cbp, bsize, 1);
+      return cbp;
+    }
   }
-   
-  if (cpp != pp) memmove(cpp, pp, PAYLOAD_SIZE(pp));
-  SET_INFO(cpp, bsize, 1);
-  return cpp;
+  return cbp;
 }
 
 /**
  * chop the given free-block into a small free-blocks of the given size.
 */
-static void chop_block(void* pp, size_t size){
-  if ((pp == NULL) || (size < MIN_BLOCK_SIZE)) return;
-  size_t bsize = BLOCK_SIZE(pp);
+static void chop_block(void* bp, size_t size){
+  if ((bp == NULL) || (size < MIN_BLOCK_SIZE)) return;
+  size_t bsize = BLOCK_SIZE(bp);
   if ((size + MIN_BLOCK_SIZE) > bsize) return;
-  unlink_block(pp);
+  unlink_block(bp);
 
   while(bsize >= (size + MIN_BLOCK_SIZE)){
-    SET_INFO(pp, size, 0);
-    link_block(pp);
-    pp = NEXT_BLOCK(pp);
+    SET_INFO(bp, size, 0);
+    link_block(bp);
+    bp = NEXT_BLOCK(bp);
     bsize -= size;
   }
 
-  SET_INFO(pp, bsize, 0);
-  link_block(pp);
+  SET_INFO(bp, bsize, 0);
+  link_block(bp);
 }
 
 /**
@@ -370,23 +339,23 @@ static void chop_block(void* pp, size_t size){
  * Return address of the added free block, NULL on error.
 */
 void* extend_heap(size_t size) {
-  WTYPE* pp;
+  WTYPE* bp;
   size = ALIGN(size);
-  if ((long)(pp = mem_sbrk(size)) == -1) return NULL;
+  if ((long)(bp = mem_sbrk(size)) == -1) return NULL;
 
-  SET_INFO(pp, size, 0);                      /* Initialize a free block */
-  link_block(pp);
-  WRITE(HEADER(NEXT_BLOCK(pp)), 0, 1);        /* New Tail Word */
+  SET_INFO(bp, size, 0);                      /* Initialize a free block */
+  link_block(bp);
+  WRITE(HEADER(NEXT_BLOCK(bp)), 0, 1);        /* New Tail Word */
 
-  return pp;
+  return bp;
 }
 
 /* Find the first block greater than or equal to size
  * Return address of the first-fit, NULL if no-fit.
 */
 static void* first_fit(void* free_list, size_t size) {
-  for (void* pp = free_list; pp != NULL ; pp = GET_SUCC(pp)) {
-    if (size <= BLOCK_SIZE(pp)) return pp;
+  for (void* bp = free_list; bp != NULL ; bp = GET_NEXT(bp)) {
+    if (size <= BLOCK_SIZE(bp)) return bp;
   }
   return NULL;
 }
@@ -395,14 +364,14 @@ static void* first_fit(void* free_list, size_t size) {
  * Return address of the best-fit, NULL if no-fit.
 */
 static void* best_fit(void* free_list, size_t size) {
-  void* pp;
+  void* bp;
   void* best = NULL;
   size_t best_size = __SIZE_MAX__;
 
-  for (pp = free_list; pp != NULL ; pp = GET_SUCC(pp)) {
-    size_t curr_size = BLOCK_SIZE(pp);
+  for (bp = free_list; bp != NULL ; bp = GET_NEXT(bp)) {
+    size_t curr_size = BLOCK_SIZE(bp);
     if ((size <= curr_size) && (curr_size < best_size)){
-      best = pp;
+      best = bp;
     }
   }
 
@@ -414,7 +383,7 @@ static void* best_fit(void* free_list, size_t size) {
  * Return address of a fit-block, NULL if no fit.
 */
 static void* find_fit(size_t size) {
-  for(int i = seg_index(size); i < SEGLIST_NUM; ++i){
+  for(int i = seg_index(size); i < DSIZE; ++i){
     void* fit = best_fit(seglist[i], size);
     if (fit != NULL) return fit;
   }
@@ -422,44 +391,45 @@ static void* find_fit(size_t size) {
 }
 
 /**
- * Allocate the free block at pp.
+ * Allocate the free block at bp.
  * Split the block if the remainder is greater than MIN_BLOCK_SIZE.
  * Returns the address of the allocated block payload
 */
-static void* place(void *pp, size_t size) {
-  size_t bsize = BLOCK_SIZE(pp);
+static void* place(void *bp, size_t size) {
+  size_t bsize = BLOCK_SIZE(bp);
   size_t csize = bsize - size;
 
-  unlink_block(pp);
+  unlink_block(bp);
   if (csize < MIN_BLOCK_SIZE){
-    SET_ALLOC(pp, 1);
+    SET_ALLOC(bp, 1);
   }else{
-    SET_INFO(pp, csize, 0);
-    link_block(pp);
-    pp = NEXT_BLOCK(pp);
-    SET_INFO(pp, size, 1);
+    SET_INFO(bp, csize, 0);
+    link_block(bp);
+    bp = NEXT_BLOCK(bp);
+    SET_INFO(bp, size, 1);
   }
 
-  return pp;
+  return bp;
 }
 
 /**
  * Coalesce the current block with its free previous and/or next blocks.
  * Return the address of the coalesced block.
 */
-static void* coalesce(void *pp) {
-  void* cpp = pp;                            /* coalesced payload pointer */
-  void* prev_footer = MOVE_WORD(pp, -2);
-  void* next_header = HEADER(NEXT_BLOCK(pp));
+static void* coalesce(void *bp) {
+  void* cbp = bp;                            /* coalesced payload pointer */
+  void* prev_footer = MOVE_WORD(bp, -2);
+  void* next_header = HEADER(NEXT_BLOCK(bp));
   
   size_t prev_alloc = READ_ALLOC(prev_footer);
   size_t next_alloc = READ_ALLOC(next_header);
-  size_t curr_alloc = !IS_FREE(pp);
-  size_t size = BLOCK_SIZE(pp);
+  size_t size = BLOCK_SIZE(bp);
 
-  if (prev_alloc && next_alloc) return pp;
-
-  if (!curr_alloc) unlink_block(pp);
+  if (prev_alloc && next_alloc) {
+    link_block(bp);
+    return bp;
+  }
+  // if (!curr_alloc) unlink_block(bp);  //
 
   if (!next_alloc) {
     size += READ_SIZE(next_header);
@@ -468,39 +438,40 @@ static void* coalesce(void *pp) {
 
   if (!prev_alloc) {
     size += READ_SIZE(prev_footer);
-    cpp = PREV_BLOCK(pp);
-    unlink_block(cpp);
-    if (curr_alloc) memmove(cpp, pp, PAYLOAD_SIZE(pp));
-  } 
+    cbp = PREV_BLOCK(bp);
+    unlink_block(cbp);
+    // if (curr_alloc) memmove(cbp, bp, PAYLOAD_SIZE(bp));
+  }
 
-  SET_INFO(cpp, size, curr_alloc);
-  if (!curr_alloc) link_block(cpp);
+  SET_INFO(cbp, size, 0);
+  link_block(cbp);
 
-  return cpp;
+  return cbp;
 }
 
 /**
- * Add the block at pp to the free-list
+ * Add the block at bp to the free-list
 */
-static void link_block(void* pp){
-  int index = seg_index(BLOCK_SIZE(pp));
+static void link_block(void* bp){
+  int index = seg_index(BLOCK_SIZE(bp));
   WTYPE* list = seglist[index];
-  if (list) SET_PRED(list, pp);
-  SET_SUCC(pp, list);
-  SET_PRED(pp, NULL);
-  seglist[index] = pp;
+  if (list)
+    PREV_FBLK(list, bp);
+  NEXT_FBLK(bp, list);
+  PREV_FBLK(bp, NULL);
+  seglist[index] = bp;
 }
 
 /**
- * Remove the block at pp from the free-list 
+ * Remove the block at bp from the free-list 
 */
-static void unlink_block(void* pp) {
-  int index = seg_index(BLOCK_SIZE(pp));
-  WTYPE* pred_pp = GET_PRED(pp);
-  WTYPE* succ_pp = GET_SUCC(pp);
-  if (pred_pp) SET_SUCC(pred_pp, succ_pp);
-  if (succ_pp) SET_PRED(succ_pp, pred_pp);
-  if (pp == seglist[index]) seglist[index] = succ_pp;
+static void unlink_block(void* bp) {
+  int index = seg_index(BLOCK_SIZE(bp));
+  WTYPE* prev_bp = GET_PRED(bp);
+  WTYPE* next_bp = GET_NEXT(bp);
+  if (prev_bp) NEXT_FBLK(prev_bp, next_bp);
+  if (next_bp) PREV_FBLK(next_bp, prev_bp);
+  if (bp == seglist[index]) seglist[index] = next_bp;
 }
 
 /**
@@ -531,8 +502,8 @@ static int seg_index(size_t size){
  * - seglist consistency.
 */
 static void mm_check(int line){
-  WTYPE* ptr = MOVE_WORD(mem_heap_lo(), SEGLIST_NUM);
-  WTYPE* end_ptr = MOVE_BYTE(ptr, mem_heapsize()) - (SEGLIST_NUM + 1); 
+  WTYPE* ptr = MOVE_WORD(mem_heap_lo(), DSIZE);
+  WTYPE* end_ptr = MOVE_BYTE(ptr, mem_heapsize()) - (DSIZE + 1); 
   // Check head word (size = 0, allocated)
   if (READ_SIZE(ptr) != 0){
     printf("Error at %d: head-word size = %u\n",line, READ_SIZE(ptr));
@@ -551,7 +522,7 @@ static void mm_check(int line){
     printf("Error at %d: tail-word is not allocated\n",line);
   }
 
-  size_t heap_size = (SEGLIST_NUM + 2) * WSIZE;
+  size_t heap_size = (DSIZE + 2) * WSIZE;
   int free_count = 0;
   int prev_free = 0;
 
@@ -604,7 +575,7 @@ static void check_seglist(int line, int free_count){
       line);
   }
   // check each free-list in the seglist
-  for(int i = 0; i < SEGLIST_NUM; ++i){
+  for(int i = 0; i < DSIZE; ++i){
     count += check_free_list(line, i);
   }
   // check the free-block count in seglist matches the free_count
@@ -622,30 +593,30 @@ static void check_seglist(int line, int free_count){
  * Return the number of blocks in the free-list
 */
 static int check_free_list(int line, int li){
-  void* start_ptr = MOVE_WORD(mem_heap_lo(), SEGLIST_NUM);
-  void* end_ptr = MOVE_BYTE(start_ptr, mem_heapsize()) - (SEGLIST_NUM + 1); 
-  void* pred_pp = NULL;
+  void* start_ptr = MOVE_WORD(mem_heap_lo(), DSIZE);
+  void* end_ptr = MOVE_BYTE(start_ptr, mem_heapsize()) - (DSIZE + 1); 
+  void* pred_bp = NULL;
   int count = 0;
 
-  for(void* pp = seglist[li]; pp != NULL; pp = GET_SUCC(pp)){
+  for(void* bp = seglist[li]; bp != NULL; bp = GET_NEXT(bp)){
     // check if block is free
-    if (!IS_FREE(pp)){
+    if (!IS_FREE(bp)){
       printf("Error at %d: Seglist[%d] contains an allocated-block %p.\n",
-        line, li, pp);
+        line, li, bp);
     }
     // check if free-block in heap range
-    if (pp <= start_ptr || pp >= end_ptr){
+    if (bp <= start_ptr || bp >= end_ptr){
       printf("Error at %d: Seglist[%d] contains a free-block %p out of the heap range.\n",
-        line, li, pp);
+        line, li, bp);
     }
     // check the predecessor pointer
-    if (pred_pp != GET_PRED(pp)){
+    if (pred_bp != GET_PRED(bp)){
       printf("Error at %d: in Seglist[%d], inconsistant predecessor link at %p.\n",
-        line, li, pp );
+        line, li, bp );
     }
 
     ++count;
-    pred_pp = pp;
+    pred_bp = bp;
   }
 
   return count;
